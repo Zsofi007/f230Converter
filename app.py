@@ -26,9 +26,39 @@ telefon_i = "0721664814"
 email_i="RUXANDRA.NAN@ARNIS.ONG"
 
 iban_to_family = {
-    "RO88INGB0000999906692521": "MATHE",
+    "RO79INGB0000999914546676": "AMARGHIOALI",
+    "RO40INGB0000999915091354": "ANDREESCU",
+    "RO39INGB0000999915091372": "BADEA",
+    "RO30INGB0000999913046677": "BADEANU",
+    "RO27INGB0000999909689464": "BORTOI",
+    "RO89INGB0000999907433583": "CALIN",
+    "RO57INGB0000999911224628": "CIOBOTEA",
+    "RO37INGB0000999911968105": "CORNEA",
+    "RO04INGB0000999911418806": "CRACIUN",
     "RO29INGB0000999903935097": "ARNIS",
+    "RO90INGB0000999911904392": "DAFINESCU",
+    "RO35INGB0000999908813701": "DAN",
+    "RO41INGB0000999913046673": "DERITEI",
+    "RO21INGB0000999912194791": "FALCESCU",
+    "RO24INGB0000999911529705": "IONASCU",
+    "RO85INGB0000999913046657": "IONICA",
+    "RO71INGB0000999915091378": "IONITA",
+    "RO05INGB0000999909819937": "JECULESCU",
+    "RO84INGB0000999914546683": "JUGANARU",
+    "RO28INGB0000999909869381": "HOTIU",
+    "RO78INGB0000999912046325": "LACATUS",
+    "RO73INGB0000999912046318": "LOZAN STEFAN",
+    "RO65INGB0000999912069354": "LUNGU",
+    "RO88INGB0000999906692521": "MATHE",
+    "RO44INGB0000999906628905": "MITROFAN",
+    "RO28INGB0000999911125143": "NICHIFOR",
+    "RO77INGB0000999906628893": "PENU",
+    "RO52INGB0000999907433570": "RAUTA",
+    "RO19INGB0000999914546689": "SANDOR",
+    "RO22INGB0000999909869392": "SANDU",
+    "RO52INGB0000999913046669": "SOARE",
 }
+
 
 max_declarations_per_xml = 100
 extracted_data = {}
@@ -90,12 +120,12 @@ def generate_xml(gui_elements):
             chunk = data_list[i:i + max_declarations_per_xml]
             file_index = (i // max_declarations_per_xml) + 1
             xml_tree = create_xml_structure(chunk, iban, document_number)
-            document_number += 1
-            xml_filename = f"b230_{family_name}_{file_index}.xml"
+            xml_filename = f"b230_{family_name}_{document_number}.xml"
             xml_files.append({'name': xml_filename, 'xml_tree': xml_tree})
+            document_number += 1
     
     gui_elements['xml_files'] = xml_files
-    messagebox.showinfo("Success", "PDFs processed successfully. XML files created.")
+    messagebox.showinfo("Success", f"PDFs processed successfully. {len(xml_files)} XML files created.")
     show_download_gui()
 
 
@@ -147,11 +177,13 @@ def generate_declaration_element(root, data, index):
 def generate_bursa_entit_element(declaratie, extracted_data, iban):
     return ET.SubElement(declaratie, "bursa_entit", 
                          bifa_entitate="1" if extracted_data.get("bifa_entitate", "") == "X" else "0",
-                         den_entitate=extracted_data.get("den_entitate", ""),
+                         den_entitate=extracted_data.get("den_entitate", "")[:60],
                          cif_entitate=extracted_data.get("cif_entitate", ""), 
                          cont_entitate=iban,
                          procent=extracted_data.get("procent", "").replace(",", ".").replace("%", ""), 
-                         valabilitate_distribuire="2" if extracted_data.get("doi_ani", "") == "X" else "1")
+                         valabilitate_distribuire="2" if extracted_data.get("doi_ani", "") == "X" else "1",
+                         acord="1" if extracted_data.get("acord", "") == "X" else "0")
+
 
 
 def create_xml_structure(extracted_data_list, iban, document_number):
@@ -161,11 +193,6 @@ def create_xml_structure(extracted_data_list, iban, document_number):
         generate_bursa_entit_element(declaratie, extracted_data, iban)
     return ET.ElementTree(root)
 
-# def save_xml(tree, filename):
-#     with open(filename, "wb") as f:
-#         f.write(b'<?xml version="1.0"?>\n')
-#         tree.write(f, encoding="utf-8")
-
 # --- PDF Processing ---
 
 def count_non_mac_files(zip_path):
@@ -174,12 +201,34 @@ def count_non_mac_files(zip_path):
         non_macos_files = [file_name for file_name in zip_ref.namelist() if not file_name.startswith('__MACOSX')]
         return len(non_macos_files)
 
+def extract_fields_from_pdf(page):
+    # Extract the data based on coordinates for each field
+    file_data = {}
+    for field, coords in coordinates.items():
+        x = pixels_to_points(coords['x'])
+        y = pixels_to_points(coords['y'])
+        w = pixels_to_points(coords['width'])
+        h = pixels_to_points(coords['height'])
+
+        # Extract text from the bounding box (x, y, x + w, y + h)
+        cropped_region = page.within_bbox((x, y, x + w, y + h))
+        text = cropped_region.extract_text()
+        file_data[field] = text.strip() if text else ""
+    
+    return file_data
+
+def is_cnp_unique(file_data, extracted_data_array):
+    if not any(file_data.get('cif_c') == existing_data.get('data').get('cif_c') for existing_data in extracted_data_array):
+        return True
+    return False
+
 def extract_pdf_data_from_zip(zip_path):
     # Start the progress bar in a separate thread
     gui_elements['processing_label'].pack(fill='x', padx=10, pady=10)
     gui_elements['process_pdf_progress'].pack(fill='x', padx=10, pady=10)
     nr_of_files = count_non_mac_files(zip_path)
     disable_select_button()
+    cnp_duplicates = []
     def worker():
         extracted_data = {}
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -187,33 +236,33 @@ def extract_pdf_data_from_zip(zip_path):
             for file_name in zip_ref.namelist():
                 if file_name.lower().endswith('.pdf') and not file_name.startswith('__MACOSX'):
                     name_to_add = file_name
-                    gui_elements['file_list'].after(0, lambda name=name_to_add: add_file_entry(gui_elements, name))
                     gui_elements['process_pdf_progress'].after(0, lambda step_lengt=100/nr_of_files: gui_elements['process_pdf_progress'].step(step_lengt))   
                     with zip_ref.open(file_name) as file:
                         # Open the PDF in memory
                         with pdfplumber.open(BytesIO(file.read())) as pdf:
                             page = pdf.pages[0]  # assuming the relevant data is on the first page
-                            
-                            # Extract the data based on coordinates for each field
-                            file_data = {}
-                            for field, coords in coordinates.items():
-                                x = pixels_to_points(coords['x'])
-                                y = pixels_to_points(coords['y'])
-                                w = pixels_to_points(coords['width'])
-                                h = pixels_to_points(coords['height'])
+                            file_data = extract_fields_from_pdf(page)    
+                            if is_cnp_unique(file_data, gui_elements['pdf_paths']): 
+                                gui_elements['pdf_paths'].append({
+                                    'name': file_name,
+                                    'data': file_data  # Store the extracted data
+                                })
+                                gui_elements['file_list'].after(0, lambda name=name_to_add: add_file_entry(gui_elements, name))
+                            else:
+                                cnp_duplicates.append(file_name)
 
-                                # Extract text from the bounding box (x, y, x + w, y + h)
-                                cropped_region = page.within_bbox((x, y, x + w, y + h))
-                                text = cropped_region.extract_text()
-                                file_data[field] = text.strip() if text else ""
-                            
-                            gui_elements['pdf_paths'].append({
-                                'name': file_name,
-                                'data': file_data  # Store the extracted data
-                            })
-                            extracted_data[file_name] = file_data     
+
         gui_elements['process_pdf_progress'].after(0, lambda: gui_elements['process_pdf_progress'].pack_forget())
         gui_elements['processing_label'].after(0, lambda: gui_elements['processing_label'].pack_forget())
+        max_display = 10
+        if cnp_duplicates:
+            duplicates_to_show = cnp_duplicates[:max_display]
+            extra_count = len(cnp_duplicates) - max_display
+            message_text = f"Skipped {len(cnp_duplicates)} files. Duplicate CNP found in the following files: {', '.join(duplicates_to_show)}"
+            if extra_count > 0:
+                message_text += f" And {extra_count} more file(s)."
+            
+            messagebox.showwarning("Warning", message_text)
         show_generate_gui()
         enable_select_button()
     threading.Thread(target=worker, daemon=True).start()
@@ -281,8 +330,8 @@ def add_file_entry(gui_elements, file_name):
     name_label.pack(side="left", fill="x", expand=True)
 
     # Icon button (Placeholder action)
-    icon_button = ttkb.Button(file_frame, text="X", bootstyle="outline", width=3, command=lambda: print(f"Action on {file_name}"))
-    icon_button.pack(side="right", padx=5)
+    # icon_button = ttkb.Button(file_frame, text="X", bootstyle="outline", width=3, command=lambda: print(f"Action on {file_name}"))
+    # icon_button.pack(side="right", padx=5)
 
     gui_elements['file_entries'].append(file_frame)  # Store references
 
@@ -308,9 +357,9 @@ def create_gui_elements():
     ToolTip(select_button, text="File size should NOT exceed 1 GB.")
 
     #generate
-    document_number_label = ttkb.Label(frame_left, text="Enter the number of the first document.")
-    document_number_entry = ttkb.Entry(frame_left, placeholder="Document Number")
-    document_number_after_label = ttkb.Label(frame_left, text="e.g. if 5 files are generated and the first\ndocument number is 100, the documents \nwill be numbered 100, 101, 102, 103, 104.\nIf left empty, the default value is 1.")
+    document_number_label = ttkb.Label(frame_left, text="Enter the 'Nr. inregistrare borderou' of the first document.")
+    document_number_entry = ttkb.Entry(frame_left)
+    document_number_after_label = ttkb.Label(frame_left, text="e.g. if 5 files are generated and the first\n number is 100, the documents \nwill be numbered 100, 101, 102, 103, 104.\nIf left empty, the default value is 1.")
     generate_button = ttkb.Button(frame_left, text="Generate XMLs", bootstyle=PRIMARY, command=lambda: generate_xml(gui_elements))
 
     #download
